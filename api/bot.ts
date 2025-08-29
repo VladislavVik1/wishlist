@@ -9,7 +9,6 @@ const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 if (!BOT_TOKEN || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  // не кидаем 500 наружу (Telegram начнет ретраить), просто залогируем
   console.error("Missing env", {
     BOT_TOKEN: !!BOT_TOKEN,
     SUPABASE_URL: !!SUPABASE_URL,
@@ -58,6 +57,7 @@ const buildItemLine = (item: Item) => {
   return `• ${title}${price} (id:${item.id.slice(0, 6)})`;
 };
 
+// ====== DB HELPERS ======
 async function getOrCreateMember(ctx: Context): Promise<Member> {
   const uid = ctx.from!.id;
   const name = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ") || ctx.from?.username || null;
@@ -84,16 +84,28 @@ async function otherHouseholdMembers(household_id: string, me: number): Promise<
   return (data || []) as Member[];
 }
 
-const keyboardForItem = (item: Item) =>
-  new InlineKeyboard()
-    .text(item.status === "done" ? "↩️ Вернуть" : "✅ Готово", `toggle:${item.id}`)
-    .text("✏ Цена", `hintprice:${item.id}`).row()
-    .text("🗑 Удалить", `del:${item.id}`);
-
 // ====== BOT ======
 const bot = new Bot(BOT_TOKEN);
 
-// --- команды (оставил твою логику без изменений) ---
+// лог всех ошибок бота в логи Vercel
+bot.catch((err) => {
+  console.error("Bot error:", err.error || err);
+});
+
+// Быстрые проверки
+bot.command("ping", (ctx) => ctx.reply("pong"));
+bot.command("health", async (ctx) => {
+  try {
+    const { error } = await supabase.from("households").select("id", { head: true, count: "exact" }).limit(1);
+    if (error) throw error;
+    await ctx.reply("Supabase: OK");
+  } catch (e: any) {
+    console.error("Supabase health error:", e);
+    await ctx.reply("Supabase error: " + (e?.message || e));
+  }
+});
+
+// Команды
 bot.command("start", async (ctx) => {
   if (!isPrivate(ctx)) return ctx.reply("Используйте бота в личном чате.");
   const me = await getOrCreateMember(ctx);
@@ -263,8 +275,8 @@ bot.on("callback_query:data", async (ctx) => {
   }
 });
 
-// ====== Vercel handler (важно) ======
-const handleUpdate = webhookCallback(bot, "express");
+// ====== Vercel handler (HTTP-адаптер) ======
+const handleUpdate = webhookCallback(bot, "http"); // <— ВАЖНО
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
