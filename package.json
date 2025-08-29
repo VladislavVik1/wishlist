@@ -1,0 +1,20 @@
+{
+  "name": "telegram-wishlist-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p .",
+    "dev": "vercel dev",
+    "start": "node build/api/bot.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "grammy": "^1.26.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@vercel/node": "^3.2.25",
+    "typescript": "^5.6.2"
+  }
+}
