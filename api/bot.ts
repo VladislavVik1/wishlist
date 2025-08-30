@@ -1,5 +1,4 @@
-import { Bot, InlineKeyboard, webhookCallback } from "grammy";
-import type { Context } from "grammy";
+import { Bot, Context, InlineKeyboard, webhookCallback } from "https://deno.land/x/grammy@v1.26.1/mod.ts";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
@@ -179,13 +178,13 @@ function priceKeyboard(itemId: string) {
 
 /** ===== Bot ===== */
 const bot = new Bot(BOT_TOKEN);
-bot.catch(e => console.error("Bot error:", e.error || e));
+bot.catch((e: any) => console.error("Bot error:", e.error || e));
 
 /** --- базовые --- */
-bot.command("ping", ctx => ctx.reply("pong"));
-bot.command("help", (ctx) => ctx.reply("/add, /categories, /list, /budget, /setprice, /create_household, /join_household"));
+bot.command("ping", (ctx: Context) => ctx.reply("pong"));
+bot.command("help", (ctx: Context) => ctx.reply("/add, /categories, /list, /budget, /setprice, /create_household, /join_household"));
 
-bot.command("start", async (ctx) => {
+bot.command("start", async (ctx: Context) => {
   if (!isPrivate(ctx)) return ctx.reply("Используйте бота в личном чате.");
   const me = await getOrCreateMember(ctx);
   if (me.household_id) {
@@ -207,7 +206,7 @@ bot.command("start", async (ctx) => {
 });
 
 /** --- create/join household --- */
-bot.command("create_household", async (ctx) => {
+bot.command("create_household", async (ctx: Context) => {
   if (!isPrivate(ctx)) return;
   const me = await getOrCreateMember(ctx);
   const name = (ctx.match as string | undefined)?.trim() || null;
@@ -220,7 +219,7 @@ bot.command("create_household", async (ctx) => {
   await ctx.reply(`Код приглашения: <code>${invite_code}</code>\nУ Марины: /join_household ${invite_code}`, { parse_mode: "HTML" });
 });
 
-bot.command("join_household", async (ctx) => {
+bot.command("join_household", async (ctx: Context) => {
   if (!isPrivate(ctx)) return;
   const code = ((ctx.match as string) || "").trim().toUpperCase();
   if (!code) return ctx.reply("Укажите код: /join_household ABC123");
@@ -234,7 +233,7 @@ bot.command("join_household", async (ctx) => {
 });
 
 /** --- categories menu (кнопки + «прыжки») --- */
-bot.command("categories", async (ctx) => {
+bot.command("categories", async (ctx: Context) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
   const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
@@ -242,7 +241,7 @@ bot.command("categories", async (ctx) => {
 });
 
 /** --- budget --- */
-bot.command("budget", async (ctx) => {
+bot.command("budget", async (ctx: Context) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
   const arg = ((ctx.match as string) || "").trim();
@@ -261,7 +260,7 @@ bot.command("budget", async (ctx) => {
 
 /** ========== /add — ВИЗАРД ========== */
 /** Шаг 0: команда /add — создаём черновик со стадией 'title' и просим ввести название */
-bot.command("add", async (ctx) => {
+bot.command("add", async (ctx: Context) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
 
@@ -285,7 +284,7 @@ bot.command("add", async (ctx) => {
 });
 
 /** Общий обработчик сообщений для стадий визарда (название/цена) */
-bot.on("message", async (ctx) => {
+bot.on("message", async (ctx: Context) => {
   if (!isPrivate(ctx)) return;
   const me = await getOrCreateMember(ctx);
 
@@ -324,7 +323,7 @@ bot.on("message", async (ctx) => {
       .eq("household_id", pending.household_id)
       .order("id");
 
-    return ctx.reply(`Хотелка: <b>${escapeHtml(title.trim())}</b>\nВыбери категорию:`, {
+    return ctx.reply(`Хотелка: <b>${escapeHtml(title.trim())}</b>\nВыбери категориу:`, {
       parse_mode: "HTML",
       reply_markup: makeCategoryKeyboardForAdd((cats || []) as Category[], pending.id),
     });
@@ -350,7 +349,7 @@ bot.on("message", async (ctx) => {
 });
 
 /** ========== /list — табличный вывод ========== */
-bot.command("list", async (ctx) => {
+bot.command("list", async (ctx: Context) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
 
@@ -386,7 +385,7 @@ bot.command("list", async (ctx) => {
 });
 
 /** ========== callbacks ========== */
-bot.on("callback_query:data", async (ctx) => {
+bot.on("callback_query:data", async (ctx: Context) => {
   const d = ctx.callbackQuery.data;
 
   // выбор категории (из визарда /add)
@@ -549,7 +548,7 @@ bot.on("callback_query:data", async (ctx) => {
 });
 
 /** --- setprice вручную (остаётся как альтернатива) --- */
-bot.command("setprice", async (ctx) => {
+bot.command("setprice", async (ctx: Context) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
   const [id, priceStr] = ((ctx.match as string) || "").trim().split(/\s+/, 2);
