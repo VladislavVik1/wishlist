@@ -1,19 +1,28 @@
 {
   "compilerOptions": {
     "target": "ES2020",
+    "lib": ["ES2020"],
     "module": "ES2020",
     "moduleResolution": "node",
-    "rootDir": "./api",
+    "rootDir": "./",
     "outDir": "./build",
     "esModuleInterop": true,
     "strict": true,
     "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": false,
+    "declaration": false,
     "sourceMap": true,
-    "types": [
-      "node"
-    ]
+    "types": ["node"]
   },
   "include": [
-    "api/**/*.ts"
+    "api/**/*.ts",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "build"
   ]
 }
