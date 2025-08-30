@@ -451,54 +451,60 @@ bot.command("list", async (ctx: Context) => {
 });
 
 /** ========== /list_photos — вывод с фотографиями ========== */
-bot.command("list_photos", async (ctx: Context) => {
+bot.command("list", async (ctx: Context) => {
   try {
     const me = await getOrCreateMember(ctx);
     if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
 
-    // Получаем категории для отображения названий
-    const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
-    const mapCat = new Map<number, Category>(); 
-    for (const c of cats || []) mapCat.set((c as Category).id, c as Category);
-
-    // Получаем элементы с их изображениями
-    const { data: items } = await supabase
+    // Получаем элементы с их изображениями и категориями
+    const { data: items, error } = await supabase
       .from("items")
-      .select("*, item_images(file_id)")
+      .select(`
+        *,
+        categories:category_id(name),
+        item_images(file_id)
+      `)
       .eq("household_id", me.household_id)
       .neq("status", "deleted")
       .order("created_at", { ascending: false });
 
+    if (error) {
+      logger.error("Error fetching items:", error);
+      return ctx.reply("Произошла ошибка при получении данных.");
+    }
+
     const rows = (items || []) as any[];
     if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
 
-    // Отправляем первые 3 элементов с фото
-    for (const item of rows.slice(0, 3)) {
-      const hasImage = item.item_images && item.item_images.length > 0;
+    // Отправляем каждый элемент отдельным сообщением
+    for (const item of rows) {
+      const categoryName = item.categories?.name || "Без категории";
       const statusIcon = item.status === "done" ? "✅ " : "📝 ";
-      const categoryName = item.category_id ? mapCat.get(item.category_id)?.name || "" : "";
+      const price = item.price_uah > 0 ? `Цена: ${fmtMoney(item.price_uah)}` : "Цена не указана";
       
-      let message = `${statusIcon}<b>${escapeHtml(item.title)}</b>`;
-      if (categoryName) message += `\nКатегория: ${escapeHtml(categoryName)}`;
-      if (item.price_uah > 0) message += `\nЦена: ${fmtMoney(item.price_uah)}`;
-      message += `\nID: <code>${item.id.slice(0, 8)}</code>`;
+      let message = `${statusIcon}<b>${escapeHtml(item.title)}</b>\n`;
+      message += `Категория: ${escapeHtml(categoryName)}\n`;
+      message += `${price}\n`;
+      message += `ID: <code>${item.id.slice(0, 8)}</code>`;
       
       try {
-        if (hasImage) {
+        // Если есть фото, отправляем с фото
+        if (item.item_images && item.item_images.length > 0) {
           await ctx.replyWithPhoto(item.item_images[0].file_id, {
             caption: message,
             parse_mode: "HTML",
             reply_markup: keyboardForItem(item)
           });
         } else {
+          // Если фото нет, отправляем просто текст
           await ctx.reply(message, {
             parse_mode: "HTML",
             reply_markup: keyboardForItem(item)
           });
         }
         
-        // Задержка между сообщениями
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Небольшая задержка между сообщениями
+        await new Promise(resolve => setTimeout(resolve, 300));
       } catch (error) {
         logger.error("Error sending item:", error);
         // В случае ошибки отправляем текстовый вариант
@@ -508,14 +514,11 @@ bot.command("list_photos", async (ctx: Context) => {
         });
       }
     }
-    
-    if (rows.length > 3) {
-      await ctx.reply(`... и ещё ${rows.length - 3} позиций. Используйте /categories для просмотра по категориям.`);
-    }
   } catch (error) {
-    logger.error("Error in /list_photos command:", error);
-    await ctx.reply("Произошла ошибка при получении списка с фото. Попробуйте позже.");
+    logger.error("Error in /list command:", error);
+    await ctx.reply("Произошла ошибка при получении списка. Попробуйте позже.");
   }
+  
 });
 
 /** ========== callbacks ========== */
@@ -763,3 +766,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 }
+
