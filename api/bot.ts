@@ -330,6 +330,55 @@ bot.callbackQuery("join_household", async (ctx: Context) => {
     await ctx.answerCallbackQuery({ text: "Ошибка" });
   }
 });
+// 👉 вставь это выше bot.on("message")
+async function replyList(ctx: Context) {
+  if (!isPrivate(ctx)) return;
+
+  const me = await getOrCreateMember(ctx);
+  if (!me.household_id) {
+    await ctx.reply("Сначала создайте или присоединитесь к домохозяйству.", {
+      reply_markup: new InlineKeyboard()
+        .text("🏠 Создать", "create_household")
+        .text("🔗 Присоединиться", "join_household"),
+    });
+    return;
+  }
+
+  const { data: items, error } = await supabase
+    .from("items")
+    .select(`
+      *,
+      categories:category_id(name),
+      item_images(file_id)
+    `)
+    .eq("household_id", me.household_id)
+    .neq("status", "deleted")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    logger.error("Error fetching items (/list):", error);
+    await ctx.reply("Ошибка при получении данных.");
+    return;
+  }
+
+  const rows = (items || []) as ItemWithRelations[];
+
+  if (rows.length === 0) {
+    await ctx.reply("Пусто. Добавьте хотелки через меню.", {
+      reply_markup: new InlineKeyboard()
+        .text("➕ Добавить", "add_item").row()
+        .text("⬅️ В меню", "refresh_menu"),
+    });
+    return;
+  }
+
+  await ctx.reply(`Найдено хотелок: ${rows.length}\nВыберите действие:`, {
+    reply_markup: new InlineKeyboard()
+      .text("📋 Показать все", "show_all_items")
+      .text("🏷 По категориям", "categories").row()
+      .text("⬅️ Назад", "refresh_menu"),
+  });
+}
 
 bot.on("message", async (ctx: Context) => {
   try {
@@ -499,54 +548,7 @@ bot.on("message", async (ctx: Context) => {
   }
 });
 
-async function handleListCommand(ctx: Context) {
-  try {
-    if (!isPrivate(ctx)) return;
-    const me = await getOrCreateMember(ctx);
-    if (!me.household_id) {
-      return ctx.reply("Сначала создайте или присоединитесь к домохозяйству.", {
-        reply_markup: new InlineKeyboard()
-          .text("🏠 Создать", "create_household")
-          .text("🔗 Присоединиться", "join_household")
-      });
-    }
 
-    const { data: items, error } = await supabase
-      .from("items")
-      .select(`
-        *,
-        categories:category_id(name),
-        item_images(file_id)
-      `)
-      .eq("household_id", me.household_id)
-      .neq("status", "deleted")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      logger.error("Error fetching items (/list):", error);
-      return ctx.reply("Ошибка при получении данных.");
-    }
-
-    const rows = (items || []) as ItemWithRelations[];
-    if (rows.length === 0) {
-      return ctx.reply("Пусто. Добавьте хотелки через меню.", {
-        reply_markup: new InlineKeyboard()
-          .text("➕ Добавить", "add_item").row()
-          .text("⬅️ В меню", "refresh_menu")
-      });
-    }
-
-    return ctx.reply(`Найдено хотелок: ${rows.length}\nВыберите действие:`, {
-      reply_markup: new InlineKeyboard()
-        .text("📋 Показать все", "show_all_items")
-        .text("🏷 По категориям", "categories").row()
-        .text("⬅️ Назад", "refresh_menu")
-    });
-  } catch (e) {
-    logger.error("Error in handleListCommand", e);
-    return ctx.reply("Произошла ошибка. Попробуйте ещё раз.");
-  }
-}
 /** --- Добавление хотелки через меню --- */
 bot.callbackQuery("add_item", async (ctx: Context) => {
   try {
