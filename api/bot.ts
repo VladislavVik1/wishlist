@@ -125,17 +125,9 @@ function priceKeyboard(itemId: string) {
 const bot = new Bot(BOT_TOKEN);
 bot.catch(e => console.error("Bot error:", e.error || e));
 
+/** --- базовые --- */
 bot.command("ping", ctx => ctx.reply("pong"));
-bot.command("health", async (ctx) => {
-  try {
-    const { error } = await supabase.from("households").select("id", { head:true, count:"exact" }).limit(1);
-    if (error) throw error;
-    await ctx.reply("Supabase: OK");
-  } catch (e:any) {
-    console.error("Supabase health error:", e);
-    await ctx.reply("Supabase error: " + (e?.message || e));
-  }
-});
+bot.command("help", (ctx) => ctx.reply("/add, /categories, /list, /budget, /setprice, /create_household, /join_household"));
 
 bot.command("start", async (ctx) => {
   if (!isPrivate(ctx)) return ctx.reply("Используйте бота в личном чате.");
@@ -145,7 +137,7 @@ bot.command("start", async (ctx) => {
     await ctx.reply(
       `Привет! Домохозяйство: <b>${escapeHtml(hh?.name || "Семья")}</b>\n\n` +
       `Команды:\n` +
-      `/add <название хотелки> — шаг 1 (потом выберешь категорию и цену)\n` +
+      `/add — пошагово создать хотелку (название → категория → цена)\n` +
       `/categories — меню с категориями (кнопки)\n` +
       `/list — табличный список\n` +
       `/budget [сумма] — посмотреть/изменить бюджет\n` +
@@ -158,8 +150,7 @@ bot.command("start", async (ctx) => {
   }
 });
 
-bot.command("help", (ctx) => ctx.reply("/add, /categories, /list, /budget, /setprice, /create_household, /join_household"));
-
+/** --- create/join household --- */
 bot.command("create_household", async (ctx) => {
   if (!isPrivate(ctx)) return;
   const me = await getOrCreateMember(ctx);
@@ -186,16 +177,15 @@ bot.command("join_household", async (ctx) => {
   return ctx.reply("Вы присоединились! Используйте /add и /list");
 });
 
-/** ========== /categories: меню с кнопками категорий ========== */
+/** --- categories menu (кнопки + «прыжки») --- */
 bot.command("categories", async (ctx) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
   const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
-  const kb = makeCategoriesMenuKeyboard((cats || []) as Category[]);
-  return ctx.reply("Выбери категорию:", { reply_markup: kb });
+  return ctx.reply("Выбери категорию:", { reply_markup: makeCategoriesMenuKeyboard((cats || []) as Category[]) });
 });
 
-/** ========== /budget ========== */
+/** --- budget --- */
 bot.command("budget", async (ctx) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
@@ -213,36 +203,92 @@ bot.command("budget", async (ctx) => {
   }
 });
 
-/** ========== /add (пошагово): название → категория → цена ========== */
+/** ========== /add — ВИЗАРД ========== */
+/** Шаг 0: команда /add — создаём черновик со стадией 'title' и просим ввести название */
 bot.command("add", async (ctx) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
 
-  const text = (ctx.message as any)?.caption || (ctx.message as any)?.text || "";
-  const title = text.replace(/^\/add\s*/i, "").trim();
-  if (!title) return ctx.reply("Напиши после команды название хотелки:\n/add Кроссовки Nike");
+  // чистим старые зависшие черновики пользователя
+  await supabase.from("pending_adds").delete().eq("user_id", me.telegram_user_id);
 
-  const photos = (ctx.message as any)?.photo as Array<{ file_id: string }> | undefined;
-  const photoId = photos?.length ? photos[photos.length - 1].file_id : null;
+  await supabase.from("pending_adds").insert({
+    user_id: me.telegram_user_id,
+    household_id: me.household_id,
+    stage: "title",
+  });
 
-  const { data: pending, error } = await supabase
-    .from("pending_adds")
-    .insert({ user_id: me.telegram_user_id, household_id: me.household_id, title, photo_file_id: photoId })
-    .select("*")
-    .single();
-  if (error) throw error;
-
-  const { data: cats, error: err2 } = await supabase
-    .from("categories").select("*")
-    .eq("household_id", me.household_id)
-    .order("id");
-  if (err2) throw err2;
-
-  const kb = makeCategoryKeyboardForAdd((cats || []) as Category[], pending.id);
-  await ctx.reply(`Хотелка: <b>${escapeHtml(title)}</b>\nВыбери категорию:`, { parse_mode: "HTML", reply_markup: kb });
+  await ctx.reply("Введи название хотелки (можно приложить фото):", {
+    reply_markup: { force_reply: true },
+  });
 });
 
-/** ========== /list: табличный вывод (Название | Категория | Цена) ========== */
+/** Общий обработчик сообщений для стадий визарда (название/цена) */
+bot.on("message", async (ctx) => {
+  if (!isPrivate(ctx)) return;
+  const me = await getOrCreateMember(ctx);
+
+  // проверяем есть ли активный черновик
+  const { data: pending } = await supabase
+    .from("pending_adds")
+    .select("*")
+    .eq("user_id", me.telegram_user_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!pending) return;
+
+  // не перехватываем команды во время визарда
+  const text = (ctx.message as any)?.text as string | undefined;
+  if (text && text.startsWith("/")) return;
+
+  // STAGE: title  — сохраняем название (+фото), спрашиваем категорию
+  if (pending.stage === "title") {
+    const title = (ctx.message as any)?.caption || (ctx.message as any)?.text || "";
+    if (!title.trim()) return ctx.reply("Пустое название. Напиши текстом, например: «Кроссовки Nike».");
+
+    const photos = (ctx.message as any)?.photo as Array<{ file_id: string }> | undefined;
+    const photoId = photos?.length ? photos[photos.length - 1].file_id : null;
+
+    await supabase.from("pending_adds").update({
+      title: title.trim(),
+      photo_file_id: photoId,
+      stage: "category",
+    }).eq("id", pending.id);
+
+    const { data: cats } = await supabase
+      .from("categories")
+      .select("*")
+      .eq("household_id", pending.household_id)
+      .order("id");
+
+    return ctx.reply(`Хотелка: <b>${escapeHtml(title.trim())}</b>\nВыбери категорию:`, {
+      parse_mode: "HTML",
+      reply_markup: makeCategoryKeyboardForAdd((cats || []) as Category[], pending.id),
+    });
+  }
+
+  // STAGE: price — пользователь прислал текст с ценой
+  if (pending.stage === "price" && pending.item_id) {
+    const priceText = (ctx.message as any)?.text || "";
+    const num = toPrice(priceText);
+    if (num === null) return ctx.reply("Не понял цену. Пример: 1500 или 1,500");
+
+    await supabase.from("items").update({ price_uah: num }).eq("id", pending.item_id);
+    const { data: item } = await supabase.from("items").select("*").eq("id", pending.item_id).single();
+
+    // завершаем визард
+    await supabase.from("pending_adds").delete().eq("id", pending.id);
+
+    return ctx.reply(`Готово: ${buildItemLine(item as Item)}`, {
+      parse_mode: "HTML",
+      reply_markup: keyboardForItem(item as Item),
+    });
+  }
+});
+
+/** ========== /list — табличный вывод ========== */
 bot.command("list", async (ctx) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
@@ -260,11 +306,10 @@ bot.command("list", async (ctx) => {
   const rows = (items || []) as Item[];
   if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
 
-  // Формируем таблицу
   const NAME_W = 28, CAT_W = 14, PRICE_W = 10;
   const header = `#  ${pad("Название", NAME_W)}  ${pad("Категория", CAT_W)}  ${pad("Цена", PRICE_W)}`;
   const lines: string[] = [header];
-  const limit = 60; // чтобы не упереться в лимит 4096 символов
+  const limit = 60;
   rows.slice(0, limit).forEach((it, i) => {
     const cat = it.category_id ? mapCat.get(it.category_id)?.name || "-" : "-";
     const price = it.price_uah ? fmtMoney(it.price_uah) : "-";
@@ -276,11 +321,11 @@ bot.command("list", async (ctx) => {
   await ctx.reply(`<pre>${lines.join("\n")}</pre>`, { parse_mode: "HTML" });
 });
 
-/** ========== callbacks: toggle/del/hintprice + addcat/price/pricemanual + cat-menu ========== */
+/** ========== callbacks ========== */
 bot.on("callback_query:data", async (ctx) => {
   const d = ctx.callbackQuery.data;
 
-  // --- шаг добавления: выбор категории ---
+  // выбор категории (из визарда /add)
   if (d.startsWith("addcat:")) {
     const [, pendingId, catIdStr] = d.split(":");
     const me = await getOrCreateMember(ctx);
@@ -304,7 +349,9 @@ bot.on("callback_query:data", async (ctx) => {
     if (pend.photo_file_id) {
       await supabase.from("item_images").insert({ item_id: item.id, file_id: pend.photo_file_id });
     }
-    await supabase.from("pending_adds").delete().eq("id", pendingId);
+
+    // обновляем черновик -> ждём цену
+    await supabase.from("pending_adds").update({ stage: "price", item_id: item.id }).eq("id", pendingId);
 
     // уведомим второго участника
     const others = await otherHouseholdMembers(item.household_id, pend.user_id);
@@ -319,7 +366,7 @@ bot.on("callback_query:data", async (ctx) => {
     return ctx.answerCallbackQuery();
   }
 
-  // --- шаг добавления: выбор/ввод цены ---
+  // быстрый выбор цены
   if (d.startsWith("price:")) {
     const [, itemId, val] = d.split(":");
     if (val !== "skip") {
@@ -327,6 +374,10 @@ bot.on("callback_query:data", async (ctx) => {
       if (num !== null) await supabase.from("items").update({ price_uah: num }).eq("id", itemId);
     }
     const { data: item } = await supabase.from("items").select("*").eq("id", itemId).single();
+
+    // чистим черновик, если он был на стадии price
+    await supabase.from("pending_adds").delete().eq("item_id", itemId);
+
     await ctx.editMessageText(`Готово: ${buildItemLine(item as Item)}`, {
       parse_mode: "HTML",
       reply_markup: keyboardForItem(item as Item),
@@ -334,21 +385,24 @@ bot.on("callback_query:data", async (ctx) => {
     return ctx.answerCallbackQuery({ text: "Сохранено" });
   }
 
+  // ручной ввод цены (без команды) — перевodим визард в stage=price и ждём текст
   if (d.startsWith("pricemanual:")) {
     const [, itemId] = d.split(":");
+    await supabase.from("pending_adds").upsert(
+      { user_id: ctx.from!.id, household_id: "", stage: "price", item_id: itemId } as any,
+      { onConflict: "user_id" }
+    );
     await ctx.answerCallbackQuery();
-    return ctx.reply(`Введи свою цену командой:\n/setprice ${itemId} 1234`);
+    return ctx.reply("Введи цену числом (пример: 1500 или 1,500):", { reply_markup: { force_reply: true } });
   }
 
-  // --- меню категорий и «прыжки» по ним ---
+  // меню категорий и «прыжки»
   if (d === "cat:all") {
     const me = await getOrCreateMember(ctx);
     const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
-    const kb = makeCategoriesMenuKeyboard((cats || []) as Category[]);
-    await ctx.editMessageText("Выбери категорию:", { reply_markup: kb });
+    await ctx.editMessageText("Выбери категорию:", { reply_markup: makeCategoriesMenuKeyboard((cats || []) as Category[]) });
     return ctx.answerCallbackQuery();
   }
-
   if (d.startsWith("cat:")) {
     const me = await getOrCreateMember(ctx);
     const catId = Number(d.split(":")[1]);
@@ -356,8 +410,7 @@ bot.on("callback_query:data", async (ctx) => {
     const mapCat = new Map<number, Category>(); for (const c of cats || []) mapCat.set((c as Category).id, c as Category);
 
     const { data: items } = await supabase
-      .from("items")
-      .select("*")
+      .from("items").select("*")
       .eq("household_id", me.household_id)
       .eq("category_id", catId)
       .neq("status", "deleted")
@@ -392,7 +445,7 @@ bot.on("callback_query:data", async (ctx) => {
     return ctx.answerCallbackQuery();
   }
 
-  // --- существующие: toggle / delete / подсказка цены ---
+  // стандартные кнопки элемента
   if (d.startsWith("toggle:")) {
     const id = d.split(":")[1];
     const { data: item } = await supabase.from("items").select("*").eq("id", id).single();
@@ -405,22 +458,22 @@ bot.on("callback_query:data", async (ctx) => {
     });
     return ctx.answerCallbackQuery();
   }
-
   if (d.startsWith("del:")) {
     const id = d.split(":")[1];
     await supabase.from("items").update({ status: "deleted" }).eq("id", id);
     await ctx.editMessageText("Удалено");
     return ctx.answerCallbackQuery();
   }
-
   if (d.startsWith("hintprice:")) {
     const id = d.split(":")[1];
     await ctx.answerCallbackQuery();
-    return ctx.reply(`Изменить цену: /setprice ${id} 1234`);
+    return ctx.reply(`Измени цену: отправь число, например "1500".\n(или нажми на кнопки цены)`, {
+      reply_markup: priceKeyboard(id),
+    });
   }
 });
 
-/** ========== setprice вручную ========== */
+/** --- setprice вручную (остаётся как альтернатива) --- */
 bot.command("setprice", async (ctx) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
