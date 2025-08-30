@@ -335,14 +335,21 @@ bot.on("message", async (ctx: Context) => {
   try {
     if (!isPrivate(ctx)) return;
     if (!ctx.message || !ctx.from) return;
-    
+
     const text = ctx.message.text || "";
-    
-    // Обработка создания домохозяйства
-    if (text && !text.startsWith("/")) {
+
+    // 1) Команды обрабатываем сразу и выходим
+    if (text.startsWith("/")) {
+      if (/^\/list(?:@\w+)?$/.test(text)) {
+        await replyList(ctx); // <-- убедись, что функция replyList объявлена выше
+      }
+      return;                 // <= ВАЖНО
+    }                         // <= ВАЖНО: закрыть if-команды
+
+    // 2) Не-командные сообщения — логика домохозяйства
+    if (text) {
       const me = await getOrCreateMember(ctx);
-      
-      // Проверяем, есть ли pending операция
+
       const { data: pendingHousehold } = await supabase
         .from("pending_household")
         .select("*")
@@ -350,26 +357,25 @@ bot.on("message", async (ctx: Context) => {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      
+
       if (pendingHousehold) {
         if (pendingHousehold.type === "create") {
           const name = text.trim();
           const invite_code = Math.random().toString(36).slice(2, 8).toUpperCase();
-          
+
           const { data: hh, error } = await supabase.from("households")
             .insert({ name, budget_uah: 0, invite_code })
             .select("*")
             .single();
-            
           if (error) throw error;
-          
+
           await supabase.from("members")
             .update({ household_id: hh.id })
             .eq("telegram_user_id", me.telegram_user_id);
-            
+
           await ensureCategories(hh.id);
           await supabase.from("pending_household").delete().eq("id", pendingHousehold.id);
-          
+
           await ctx.reply(
             `Домохозяйство "${name}" создано!\nКод приглашения: <code>${invite_code}</code>\n\nПоделитесь этим кодом с женой.`,
             { parse_mode: "HTML", reply_markup: mainMenuKeyboard() }
@@ -381,32 +387,30 @@ bot.on("message", async (ctx: Context) => {
             .select("*")
             .eq("invite_code", code)
             .maybeSingle();
-            
+
           if (!hh) {
             await ctx.reply("Неверный код. Попробуйте еще раз:");
             return;
           }
-          
+
           await supabase.from("members")
             .update({ household_id: hh.id })
             .eq("telegram_user_id", me.telegram_user_id);
-            
+
           await ensureCategories(hh.id);
           await supabase.from("pending_household").delete().eq("id", pendingHousehold.id);
-          
-          await ctx.reply(
-            `Вы присоединились к домохозяйству "${hh.name}"!`,
-            { reply_markup: mainMenuKeyboard() }
-          );
+
+          await ctx.reply(`Вы присоединились к домохозяйству "${hh.name}"!`, {
+            reply_markup: mainMenuKeyboard()
+          });
           return;
         }
       }
     }
-    
-    // Остальная обработка сообщений...
+
+    // 3) Остальная обработка сообщений...
     const me = await getOrCreateMember(ctx);
 
-    // проверяем есть ли активный черновик
     const { data: pending } = await supabase
       .from("pending_adds")
       .select("*")
@@ -416,7 +420,6 @@ bot.on("message", async (ctx: Context) => {
       .maybeSingle();
 
     if (!pending) {
-      // Проверяем pending редактирования
       const { data: pendingEdit } = await supabase
         .from("pending_edits")
         .select("*")
@@ -424,14 +427,11 @@ bot.on("message", async (ctx: Context) => {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-        
+
       if (pendingEdit) {
         switch (pendingEdit.field) {
           case "title":
-            await supabase
-              .from("items")
-              .update({ title: text })
-              .eq("id", pendingEdit.item_id);
+            await supabase.from("items").update({ title: text }).eq("id", pendingEdit.item_id);
             await ctx.reply("Название обновлено!");
             break;
           case "price":
@@ -440,28 +440,22 @@ bot.on("message", async (ctx: Context) => {
               await ctx.reply("Неверная цена. Попробуйте еще раз:");
               return;
             }
-            await supabase
-              .from("items")
-              .update({ price_uah: num })
-              .eq("id", pendingEdit.item_id);
+            await supabase.from("items").update({ price_uah: num }).eq("id", pendingEdit.item_id);
             await ctx.reply(`Цена обновлена: ${fmtMoney(num)}`);
             break;
         }
-        
         await supabase.from("pending_edits").delete().eq("id", pendingEdit.id);
         return;
       }
-      
-      return;
+
+      return; // если нет pending'ов — выходим
     }
 
-    // не перехватываем команды во время визард
-    if (text && text.startsWith("/")) return;
-
-    // STAGE: title  — сохраняем название (+фото), спрашиваем категорию
+    // 4) Визард добавления
     if (pending.stage === "title") {
       const title = ctx.message.caption || text || "";
-      if (!title.trim()) return ctx.reply("Пустое название. Напиши текстом, например: «Кроссовки Nike».");
+      if (!title.trim())
+        return ctx.reply("Пустое название. Напиши текстом, например: «Кроссовки Nike».");
 
       const photos = ctx.message.photo;
       const photoId = photos?.length ? photos[photos.length - 1].file_id : null;
@@ -478,13 +472,12 @@ bot.on("message", async (ctx: Context) => {
         .eq("household_id", pending.household_id)
         .order("id");
 
-        return ctx.reply(`Хотелка: <b>${escapeHtml(title.trim())}</b>\nВыбери категорию:`, {
-          parse_mode: "HTML",
-          reply_markup: makeCategoryKeyboardForAdd((cats || []) as Category[], pending.id),
-        });
+      return ctx.reply(`Хотелка: <b>${escapeHtml(title.trim())}</b>\nВыбери категорию:`, {
+        parse_mode: "HTML",
+        reply_markup: makeCategoryKeyboardForAdd((cats || []) as Category[], pending.id),
+      });
     }
 
-    // STAGE: price — пользователь прислал текст с ценой
     if (pending.stage === "price" && pending.item_id) {
       const priceText = text || "";
       const num = toPrice(priceText);
@@ -493,7 +486,6 @@ bot.on("message", async (ctx: Context) => {
       await supabase.from("items").update({ price_uah: num }).eq("id", pending.item_id);
       const { data: item } = await supabase.from("items").select("*").eq("id", pending.item_id).single();
 
-      // завершаем визард
       await supabase.from("pending_adds").delete().eq("id", pending.id);
 
       return ctx.reply(`Готово: ${buildItemLine(item as Item)}`, {
@@ -507,6 +499,54 @@ bot.on("message", async (ctx: Context) => {
   }
 });
 
+async function handleListCommand(ctx: Context) {
+  try {
+    if (!isPrivate(ctx)) return;
+    const me = await getOrCreateMember(ctx);
+    if (!me.household_id) {
+      return ctx.reply("Сначала создайте или присоединитесь к домохозяйству.", {
+        reply_markup: new InlineKeyboard()
+          .text("🏠 Создать", "create_household")
+          .text("🔗 Присоединиться", "join_household")
+      });
+    }
+
+    const { data: items, error } = await supabase
+      .from("items")
+      .select(`
+        *,
+        categories:category_id(name),
+        item_images(file_id)
+      `)
+      .eq("household_id", me.household_id)
+      .neq("status", "deleted")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      logger.error("Error fetching items (/list):", error);
+      return ctx.reply("Ошибка при получении данных.");
+    }
+
+    const rows = (items || []) as ItemWithRelations[];
+    if (rows.length === 0) {
+      return ctx.reply("Пусто. Добавьте хотелки через меню.", {
+        reply_markup: new InlineKeyboard()
+          .text("➕ Добавить", "add_item").row()
+          .text("⬅️ В меню", "refresh_menu")
+      });
+    }
+
+    return ctx.reply(`Найдено хотелок: ${rows.length}\nВыберите действие:`, {
+      reply_markup: new InlineKeyboard()
+        .text("📋 Показать все", "show_all_items")
+        .text("🏷 По категориям", "categories").row()
+        .text("⬅️ Назад", "refresh_menu")
+    });
+  } catch (e) {
+    logger.error("Error in handleListCommand", e);
+    return ctx.reply("Произошла ошибка. Попробуйте ещё раз.");
+  }
+}
 /** --- Добавление хотелки через меню --- */
 bot.callbackQuery("add_item", async (ctx: Context) => {
   try {
