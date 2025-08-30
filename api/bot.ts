@@ -355,37 +355,45 @@ bot.command("list", async (ctx: Context) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
 
-  const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
-  const mapCat = new Map<number, Category>(); 
-  for (const c of cats || []) mapCat.set((c as Category).id, c as Category);
-
   const { data: items } = await supabase
     .from("items")
-    .select("*")
+    .select("*, item_images(file_id)")
     .eq("household_id", me.household_id)
     .neq("status", "deleted")
     .order("created_at", { ascending: false });
 
-  const rows = (items || []) as Item[];
+  const rows = (items || []) as any[];
   if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
 
-  const NAME_W = 28, CAT_W = 14, PRICE_W = 10;
-  const header = `#  ${pad("Название", NAME_W)}  ${pad("Категория", CAT_W)}  ${pad("Цена", PRICE_W)}`;
-  const lines: string[] = [header];
-  const limit = 60;
+  for (const item of rows.slice(0, 10)) { // Ограничиваем 10 элементами чтобы не спамить
+    const hasImage = item.item_images && item.item_images.length > 0;
+    const statusIcon = item.status === "done" ? "✅ " : "◻️ ";
+    
+    let message = `${statusIcon}<b>${escapeHtml(item.title)}</b>`;
+    if (item.price_uah > 0) message += `\nЦена: ${fmtMoney(item.price_uah)}`;
+    message += `\nID: <code>${item.id}</code>`;
+    
+    if (hasImage) {
+      await ctx.replyWithPhoto(item.item_images[0].file_id, {
+        caption: message,
+        parse_mode: "HTML",
+        reply_markup: keyboardForItem(item)
+      });
+    } else {
+      await ctx.reply(message, {
+        parse_mode: "HTML",
+        reply_markup: keyboardForItem(item)
+      });
+    }
+    
+    // Небольшая задержка между сообщениями чтобы избежать ограничений Telegram
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
   
-  rows.slice(0, limit).forEach((it, i) => {
-    const cat = it.category_id ? mapCat.get(it.category_id)?.name || "-" : "-";
-    const price = it.price_uah ? fmtMoney(it.price_uah) : "-";
-    const name = it.status === "done" ? `${escapeHtml(it.title)}✓` : escapeHtml(it.title);
-    lines.push(`${String(i + 1).padStart(2, " ")}. ${pad(name, NAME_W)}  ${pad(cat, CAT_W)}  ${pad(price, PRICE_W)}`);
-  });
-  
-  if (rows.length > limit) lines.push(`... и ещё ${rows.length - limit} позиций`);
-
-  await ctx.reply(`<pre>${lines.join("\n")}</pre>`, { parse_mode: "HTML" });
+  if (rows.length > 10) {
+    await ctx.reply(`... и ещё ${rows.length - 10} позиций. Используйте /categories для просмотра по категориям.`);
+  }
 });
-
 /** ========== callbacks ========== */
 bot.on("callback_query:data", async (ctx: Context) => {
   // Проверяем наличие callbackQuery и его данных
