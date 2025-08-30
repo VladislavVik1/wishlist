@@ -63,6 +63,11 @@ interface PendingAdd {
   created_at: string;
 }
 
+interface ItemWithRelations extends Item {
+  categories: { name: string } | null;
+  item_images: { file_id: string }[];
+}
+
 const DEFAULT_CATEGORIES = [
   { name: "Места куда идти с деньгами", slug: "paid_places" },
   { name: "бесплатные места", slug: "free_places" },
@@ -225,7 +230,7 @@ bot.command("start", async (ctx: Context) => {
         `Команды:\n` +
         `/add — пошагово создать хотелку (название → категория → цена)\n` +
         `/categories — меню с категориями (кнопки)\n` +
-        `/list — табличный список\n` +
+        `/list — список всех хотелок\n` +
         `/budget [сумма] — посмотреть/изменить бюджет\n` +
         `/setprice <id> <цена> — изменить цену\n` +
         `/help — справка`,
@@ -415,42 +420,7 @@ bot.on("message", async (ctx: Context) => {
   }
 });
 
-/** ========== /list — табличный вывод ========== */
-bot.command("list", async (ctx: Context) => {
-  try {
-    const me = await getOrCreateMember(ctx);
-    if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
-
-    const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
-    const mapCat = new Map<number, Category>(); 
-    for (const c of cats || []) mapCat.set((c as Category).id, c as Category);
-
-    const { data: items } = await supabase
-      .from("items")
-      .select("*")
-      .eq("household_id", me.household_id)
-      .neq("status", "deleted")
-      .order("created_at", { ascending: false });
-
-    const rows = (items || []) as Item[];
-    if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
-
-    // Упрощенный вывод без табличного форматирования
-    const message = rows.slice(0, 20).map((it, i) => {
-      const cat = it.category_id ? mapCat.get(it.category_id)?.name || "-" : "-";
-      const price = it.price_uah ? fmtMoney(it.price_uah) : "-";
-      const status = it.status === "done" ? "✓" : "⬜";
-      return `${i+1}. ${status} ${it.title} (${cat}) - ${price}`;
-    }).join("\n");
-
-    await ctx.reply(`Список хотелок:\n${message}`);
-  } catch (error) {
-    logger.error("Error in /list command:", error);
-    await ctx.reply("Произошла ошибка при получении списка. Попробуйте позже.");
-  }
-});
-
-/** ========== /list_photos — вывод с фотографиями ========== */
+/** ========== /list — вывод всех элементов с фото ========== */
 bot.command("list", async (ctx: Context) => {
   try {
     const me = await getOrCreateMember(ctx);
@@ -473,7 +443,7 @@ bot.command("list", async (ctx: Context) => {
       return ctx.reply("Произошла ошибка при получении данных.");
     }
 
-    const rows = (items || []) as any[];
+    const rows = (items || []) as ItemWithRelations[];
     if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
 
     // Отправляем каждый элемент отдельным сообщением
@@ -486,6 +456,7 @@ bot.command("list", async (ctx: Context) => {
       message += `Категория: ${escapeHtml(categoryName)}\n`;
       message += `${price}\n`;
       message += `ID: <code>${item.id.slice(0, 8)}</code>`;
+      message += `\nСтатус: ${item.status === "done" ? "✅ Выполнено" : "🔄 Активно"}`;
       
       try {
         // Если есть фото, отправляем с фото
@@ -518,7 +489,6 @@ bot.command("list", async (ctx: Context) => {
     logger.error("Error in /list command:", error);
     await ctx.reply("Произошла ошибка при получении списка. Попробуйте позже.");
   }
-  
 });
 
 /** ========== callbacks ========== */
@@ -634,7 +604,7 @@ bot.on("callback_query:data", async (ctx: Context) => {
     if (d === "cat:all") {
       const me = await getOrCreateMember(ctx);
       const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
-      await ctx.editMessageText("Выбери категорию:", { reply_markup: makeCategoriesMenuKeyboard((cats || []) as Category[]) });
+      await ctx.editMessageText("Выбери категорие:", { reply_markup: makeCategoriesMenuKeyboard((cats || []) as Category[]) });
       return ctx.answerCallbackQuery();
     }
     
@@ -766,4 +736,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 }
-
