@@ -6,8 +6,9 @@
   "scripts": {
     "build": "tsc -p .",
     "dev": "vercel dev",
-    "start": "node build/api/bot.js"
+    "start": "node build/bot.js"
   },
+  "engines": { "node": "20.x" },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "grammy": "^1.26.1"
