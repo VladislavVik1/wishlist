@@ -349,12 +349,17 @@ bot.on("message", async (ctx: Context) => {
     });
   }
 });
-
-/** ========== /list — табличный вывод ========== */
+/** ========== /list — вывод с фотографиями ========== */
 bot.command("list", async (ctx: Context) => {
   const me = await getOrCreateMember(ctx);
   if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
 
+  // Получаем категории для отображения названий
+  const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
+  const mapCat = new Map<number, Category>(); 
+  for (const c of cats || []) mapCat.set((c as Category).id, c as Category);
+
+  // Получаем элементы с их изображениями
   const { data: items } = await supabase
     .from("items")
     .select("*, item_images(file_id)")
@@ -365,33 +370,50 @@ bot.command("list", async (ctx: Context) => {
   const rows = (items || []) as any[];
   if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
 
-  for (const item of rows.slice(0, 10)) { // Ограничиваем 10 элементами чтобы не спамить
+  // Отправляем сначала общее сообщение
+  await ctx.reply(`Всего хотелок: ${rows.length}\nВыберите категорию для просмотра:`, {
+    reply_markup: makeCategoriesMenuKeyboard((cats || []) as Category[])
+  });
+
+  // Отправляем первые 5 элементов с фото
+  for (const item of rows.slice(0, 5)) {
     const hasImage = item.item_images && item.item_images.length > 0;
-    const statusIcon = item.status === "done" ? "✅ " : "◻️ ";
+    const statusIcon = item.status === "done" ? "✅ " : "📝 ";
+    const categoryName = item.category_id ? mapCat.get(item.category_id)?.name || "" : "";
     
     let message = `${statusIcon}<b>${escapeHtml(item.title)}</b>`;
+    if (categoryName) message += `\nКатегория: ${escapeHtml(categoryName)}`;
     if (item.price_uah > 0) message += `\nЦена: ${fmtMoney(item.price_uah)}`;
-    message += `\nID: <code>${item.id}</code>`;
+    message += `\nID: <code>${item.id.slice(0, 8)}</code>`;
     
-    if (hasImage) {
-      await ctx.replyWithPhoto(item.item_images[0].file_id, {
-        caption: message,
-        parse_mode: "HTML",
-        reply_markup: keyboardForItem(item)
-      });
-    } else {
+    try {
+      if (hasImage) {
+        await ctx.replyWithPhoto(item.item_images[0].file_id, {
+          caption: message,
+          parse_mode: "HTML",
+          reply_markup: keyboardForItem(item)
+        });
+      } else {
+        await ctx.reply(message, {
+          parse_mode: "HTML",
+          reply_markup: keyboardForItem(item)
+        });
+      }
+      
+      // Задержка между сообщениями
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (error) {
+      console.error("Error sending item:", error);
+      // В случае ошибки отправляем текстовый вариант
       await ctx.reply(message, {
         parse_mode: "HTML",
         reply_markup: keyboardForItem(item)
       });
     }
-    
-    // Небольшая задержка между сообщениями чтобы избежать ограничений Telegram
-    await new Promise(resolve => setTimeout(resolve, 300));
   }
   
-  if (rows.length > 10) {
-    await ctx.reply(`... и ещё ${rows.length - 10} позиций. Используйте /categories для просмотра по категориям.`);
+  if (rows.length > 5) {
+    await ctx.reply(`... и ещё ${rows.length - 5} позиций. Используйте кнопки категорий выше для просмотра остальных.`);
   }
 });
 /** ========== callbacks ========== */
