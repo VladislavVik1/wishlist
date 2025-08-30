@@ -8,10 +8,12 @@
     "dev": "vercel dev",
     "start": "node build/bot.js"
   },
-  "engines": { "node": "20.x" },
+  "engines": {
+    "node": "20.x"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
-    "grammy": "^1.26.1"
+    "grammy": "^1.38.1"
   },
   "devDependencies": {
     "@types/node": "^22.7.4",

@@ -1,4 +1,5 @@
-import { Bot, Context, InlineKeyboard, webhookCallback, InputMediaPhoto } from "grammy";
+import { Bot, Context, InlineKeyboard, webhookCallback } from "grammy";
+import type { InputMediaPhoto } from "grammy/types";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
@@ -810,15 +811,14 @@ bot.callbackQuery(/view_photos:.+/, async (ctx: Context) => {
       .eq('item_id', itemId);
 
     if (photos && photos.length > 0) {
-      // Правильно типизируем медиа объекты
+      // Используем правильный тип для медиа
       const media: InputMediaPhoto[] = photos.map(photo => ({
         type: 'photo',
         media: photo.file_id
-      } as InputMediaPhoto));
+      }));
       
       await ctx.replyWithMediaGroup(media);
       
-      // Отправляем сообщение с кнопкой назад
       await ctx.reply("Фотографии элемента:", {
         reply_markup: new InlineKeyboard().text("⬅️ Назад", `edit_photo:${itemId}`)
       });
