@@ -435,21 +435,15 @@ bot.command("list", async (ctx: Context) => {
     const rows = (items || []) as Item[];
     if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
 
-    const NAME_W = 28, CAT_W = 14, PRICE_W = 10;
-    const header = `#  ${pad("Название", NAME_W)}  ${pad("Категория", CAT_W)}  ${pad("Цена", PRICE_W)}`;
-    const lines: string[] = [header];
-    const limit = 60;
-    
-    rows.slice(0, limit).forEach((it, i) => {
+    // Упрощенный вывод без табличного форматирования
+    const message = rows.slice(0, 20).map((it, i) => {
       const cat = it.category_id ? mapCat.get(it.category_id)?.name || "-" : "-";
       const price = it.price_uah ? fmtMoney(it.price_uah) : "-";
-      const name = it.status === "done" ? `${escapeHtml(it.title)}✓` : escapeHtml(it.title);
-      lines.push(`${String(i + 1).padStart(2, " ")}. ${pad(name, NAME_W)}  ${pad(cat, CAT_W)}  ${pad(price, PRICE_W)}`);
-    });
-    
-    if (rows.length > limit) lines.push(`... и ещё ${rows.length - limit} позиций`);
+      const status = it.status === "done" ? "✓" : "⬜";
+      return `${i+1}. ${status} ${it.title} (${cat}) - ${price}`;
+    }).join("\n");
 
-    await ctx.reply(`<pre>${lines.join("\n")}</pre>`, { parse_mode: "HTML" });
+    await ctx.reply(`Список хотелок:\n${message}`);
   } catch (error) {
     logger.error("Error in /list command:", error);
     await ctx.reply("Произошла ошибка при получении списка. Попробуйте позже.");
