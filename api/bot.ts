@@ -1,4 +1,4 @@
-import { Bot, Context, InlineKeyboard, webhookCallback } from "https://deno.land/x/grammy@v1.26.1/mod.ts";
+import { Bot, Context, InlineKeyboard, webhookCallback } from "grammy";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
@@ -286,6 +286,8 @@ bot.command("add", async (ctx: Context) => {
 /** Общий обработчик сообщений для стадий визарда (название/цена) */
 bot.on("message", async (ctx: Context) => {
   if (!isPrivate(ctx)) return;
+  if (!ctx.message) return; // Добавляем проверку на существование сообщения
+  
   const me = await getOrCreateMember(ctx);
 
   // проверяем есть ли активный черновик
@@ -386,6 +388,9 @@ bot.command("list", async (ctx: Context) => {
 
 /** ========== callbacks ========== */
 bot.on("callback_query:data", async (ctx: Context) => {
+  // Проверяем наличие callbackQuery и его данных
+  if (!ctx.callbackQuery?.data) return;
+  
   const d = ctx.callbackQuery.data;
 
   // выбор категории (из визарда /add)
@@ -473,8 +478,8 @@ bot.on("callback_query:data", async (ctx: Context) => {
   }
   
   if (d.startsWith("cat:")) {
-    const me = await getOrCreateMember(ctx);
     const catId = Number(d.split(":")[1]);
+    const me = await getOrCreateMember(ctx);
     const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
     const mapCat = new Map<number, Category>(); 
     for (const c of cats || []) mapCat.set((c as Category).id, c as Category);
