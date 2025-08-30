@@ -325,10 +325,10 @@ bot.on("message", async (ctx: Context) => {
       .eq("household_id", pending.household_id)
       .order("id");
 
-    return ctx.reply(`Хотелка: <b>${escapeHtml(title.trim())}</b>\nВыбери категориу:`, {
-      parse_mode: "HTML",
-      reply_markup: makeCategoryKeyboardForAdd((cats || []) as Category[], pending.id),
-    });
+      return ctx.reply(`Хотелка: <b>${escapeHtml(title.trim())}</b>\nВыбери категорию:`, {
+        parse_mode: "HTML",
+        reply_markup: makeCategoryKeyboardForAdd((cats || []) as Category[], pending.id),
+      });
   }
 
   // STAGE: price — пользователь прислал текст с ценой
@@ -349,73 +349,116 @@ bot.on("message", async (ctx: Context) => {
     });
   }
 });
-/** ========== /list — вывод с фотографиями ========== */
+
+/** ========== /list — табличный вывод ========== */
 bot.command("list", async (ctx: Context) => {
-  const me = await getOrCreateMember(ctx);
-  if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
+  try {
+    const me = await getOrCreateMember(ctx);
+    if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
 
-  // Получаем категории для отображения названий
-  const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
-  const mapCat = new Map<number, Category>(); 
-  for (const c of cats || []) mapCat.set((c as Category).id, c as Category);
+    const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
+    const mapCat = new Map<number, Category>(); 
+    for (const c of cats || []) mapCat.set((c as Category).id, c as Category);
 
-  // Получаем элементы с их изображениями
-  const { data: items } = await supabase
-    .from("items")
-    .select("*, item_images(file_id)")
-    .eq("household_id", me.household_id)
-    .neq("status", "deleted")
-    .order("created_at", { ascending: false });
+    const { data: items } = await supabase
+      .from("items")
+      .select("*")
+      .eq("household_id", me.household_id)
+      .neq("status", "deleted")
+      .order("created_at", { ascending: false });
 
-  const rows = (items || []) as any[];
-  if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
+    const rows = (items || []) as Item[];
+    if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
 
-  // Отправляем сначала общее сообщение
-  await ctx.reply(`Всего хотелок: ${rows.length}\nВыберите категорию для просмотра:`, {
-    reply_markup: makeCategoriesMenuKeyboard((cats || []) as Category[])
-  });
-
-  // Отправляем первые 5 элементов с фото
-  for (const item of rows.slice(0, 5)) {
-    const hasImage = item.item_images && item.item_images.length > 0;
-    const statusIcon = item.status === "done" ? "✅ " : "📝 ";
-    const categoryName = item.category_id ? mapCat.get(item.category_id)?.name || "" : "";
+    const NAME_W = 28, CAT_W = 14, PRICE_W = 10;
+    const header = `#  ${pad("Название", NAME_W)}  ${pad("Категория", CAT_W)}  ${pad("Цена", PRICE_W)}`;
+    const lines: string[] = [header];
+    const limit = 60;
     
-    let message = `${statusIcon}<b>${escapeHtml(item.title)}</b>`;
-    if (categoryName) message += `\nКатегория: ${escapeHtml(categoryName)}`;
-    if (item.price_uah > 0) message += `\nЦена: ${fmtMoney(item.price_uah)}`;
-    message += `\nID: <code>${item.id.slice(0, 8)}</code>`;
+    rows.slice(0, limit).forEach((it, i) => {
+      const cat = it.category_id ? mapCat.get(it.category_id)?.name || "-" : "-";
+      const price = it.price_uah ? fmtMoney(it.price_uah) : "-";
+      const name = it.status === "done" ? `${escapeHtml(it.title)}✓` : escapeHtml(it.title);
+      lines.push(`${String(i + 1).padStart(2, " ")}. ${pad(name, NAME_W)}  ${pad(cat, CAT_W)}  ${pad(price, PRICE_W)}`);
+    });
     
-    try {
-      if (hasImage) {
-        await ctx.replyWithPhoto(item.item_images[0].file_id, {
-          caption: message,
-          parse_mode: "HTML",
-          reply_markup: keyboardForItem(item)
-        });
-      } else {
+    if (rows.length > limit) lines.push(`... и ещё ${rows.length - limit} позиций`);
+
+    await ctx.reply(`<pre>${lines.join("\n")}</pre>`, { parse_mode: "HTML" });
+  } catch (error) {
+    console.error("Error in /list command:", error);
+    await ctx.reply("Произошла ошибка при получении списка. Попробуйте позже.");
+  }
+});
+
+/** ========== /list_photos — вывод с фотографиями ========== */
+bot.command("list_photos", async (ctx: Context) => {
+  try {
+    const me = await getOrCreateMember(ctx);
+    if (!me.household_id) return ctx.reply("Сначала /create_household или /join_household");
+
+    // Получаем категории для отображения названий
+    const { data: cats } = await supabase.from("categories").select("*").eq("household_id", me.household_id).order("id");
+    const mapCat = new Map<number, Category>(); 
+    for (const c of cats || []) mapCat.set((c as Category).id, c as Category);
+
+    // Получаем элементы с их изображениями
+    const { data: items } = await supabase
+      .from("items")
+      .select("*, item_images(file_id)")
+      .eq("household_id", me.household_id)
+      .neq("status", "deleted")
+      .order("created_at", { ascending: false });
+
+    const rows = (items || []) as any[];
+    if (rows.length === 0) return ctx.reply("Пусто. Добавьте через /add");
+
+    // Отправляем первые 3 элементов с фото
+    for (const item of rows.slice(0, 3)) {
+      const hasImage = item.item_images && item.item_images.length > 0;
+      const statusIcon = item.status === "done" ? "✅ " : "📝 ";
+      const categoryName = item.category_id ? mapCat.get(item.category_id)?.name || "" : "";
+      
+      let message = `${statusIcon}<b>${escapeHtml(item.title)}</b>`;
+      if (categoryName) message += `\nКатегория: ${escapeHtml(categoryName)}`;
+      if (item.price_uah > 0) message += `\nЦена: ${fmtMoney(item.price_uah)}`;
+      message += `\nID: <code>${item.id.slice(0, 8)}</code>`;
+      
+      try {
+        if (hasImage) {
+          await ctx.replyWithPhoto(item.item_images[0].file_id, {
+            caption: message,
+            parse_mode: "HTML",
+            reply_markup: keyboardForItem(item)
+          });
+        } else {
+          await ctx.reply(message, {
+            parse_mode: "HTML",
+            reply_markup: keyboardForItem(item)
+          });
+        }
+        
+        // Задержка между сообщениями
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error("Error sending item:", error);
+        // В случае ошибки отправляем текстовый вариант
         await ctx.reply(message, {
           parse_mode: "HTML",
           reply_markup: keyboardForItem(item)
         });
       }
-      
-      // Задержка между сообщениями
-      await new Promise(resolve => setTimeout(resolve, 500));
-    } catch (error) {
-      console.error("Error sending item:", error);
-      // В случае ошибки отправляем текстовый вариант
-      await ctx.reply(message, {
-        parse_mode: "HTML",
-        reply_markup: keyboardForItem(item)
-      });
     }
-  }
-  
-  if (rows.length > 5) {
-    await ctx.reply(`... и ещё ${rows.length - 5} позиций. Используйте кнопки категорий выше для просмотра остальных.`);
+    
+    if (rows.length > 3) {
+      await ctx.reply(`... и ещё ${rows.length - 3} позиций. Используйте /categories для просмотра по категориям.`);
+    }
+  } catch (error) {
+    console.error("Error in /list_photos command:", error);
+    await ctx.reply("Произошла ошибка при получении списка с фото. Попробуйте позже.");
   }
 });
+
 /** ========== callbacks ========== */
 bot.on("callback_query:data", async (ctx: Context) => {
   // Проверяем наличие callbackQuery и его данных
