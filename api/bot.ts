@@ -3,33 +3,23 @@ import type { Context } from "grammy";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
-// ====== ENV ======
+// ===== ENV =====
 const BOT_TOKEN = process.env.BOT_TOKEN!;
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
 if (!BOT_TOKEN || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error("Missing env", {
-    BOT_TOKEN: !!BOT_TOKEN,
-    SUPABASE_URL: !!SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY: !!SUPABASE_SERVICE_ROLE_KEY,
-  });
+  console.error("Missing env", { BOT_TOKEN: !!BOT_TOKEN, SUPABASE_URL: !!SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: !!SUPABASE_SERVICE_ROLE_KEY });
 }
 
-// ====== SUPABASE ======
+// ===== DB =====
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-// ====== TYPES ======
+// ===== Types / helpers =====
 type Member = { id: string; telegram_user_id: number; name: string | null; household_id: string | null };
 type Household = { id: string; name: string | null; budget_uah: number; invite_code: string };
 type Category = { id: number; household_id: string; name: string; slug: string };
-type Item = {
-  id: string; household_id: string; category_id: number | null; title: string;
-  price_uah: number; status: "active" | "done" | "deleted"; created_by: number;
-  created_at: string; updated_at: string;
-};
+type Item = { id: string; household_id: string; category_id: number | null; title: string; price_uah: number; status: "active" | "done" | "deleted"; created_by: number; created_at: string; updated_at: string; };
 
-// ====== CONSTS / HELPERS ======
 const DEFAULT_CATEGORIES = [
   { name: "Места куда идти с деньгами", slug: "paid_places" },
   { name: "бесплатные места", slug: "free_places" },
@@ -43,69 +33,41 @@ const DEFAULT_CATEGORIES = [
 ];
 const CURRENCY = "₴";
 const isPrivate = (ctx: Context) => ctx.chat?.type === "private";
-const toPrice = (raw?: string) => {
-  if (!raw) return null;
-  const norm = raw.replace(/\s+/g, "").replace(",", ".");
-  const num = Number(norm);
-  return Number.isFinite(num) ? Number(num.toFixed(2)) : null;
-};
+const toPrice = (raw?: string) => { if (!raw) return null; const n = Number(raw.replace(/\s+/g, "").replace(",", ".")); return Number.isFinite(n) ? Number(n.toFixed(2)) : null; };
 const fmtMoney = (n: number) => `${CURRENCY}\u00A0${n.toLocaleString("ru-UA", { minimumFractionDigits: 0 })}`;
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]!));
-const buildItemLine = (item: Item) => {
-  const price = item.price_uah ? ` — ${fmtMoney(item.price_uah)}` : "";
-  const title = item.status === "done" ? `<s>${escapeHtml(item.title)}</s>` : escapeHtml(item.title);
-  return `• ${title}${price} (id:${item.id.slice(0, 6)})`;
-};
+const buildItemLine = (it: Item) => `• ${(it.status==="done" ? `<s>${escapeHtml(it.title)}</s>` : escapeHtml(it.title))}${it.price_uah ? ` — ${fmtMoney(it.price_uah)}` : ""} (id:${it.id.slice(0,6)})`;
 
-// ====== DB HELPERS ======
 async function getOrCreateMember(ctx: Context): Promise<Member> {
   const uid = ctx.from!.id;
   const name = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ") || ctx.from?.username || null;
   const { data, error } = await supabase.from("members").select("*").eq("telegram_user_id", uid).maybeSingle();
   if (error) throw error;
   if (data) return data as Member;
-  const { data: created, error: err2 } = await supabase
-    .from("members")
-    .insert({ telegram_user_id: uid, name, household_id: null })
-    .select("*").single();
+  const { data: created, error: err2 } = await supabase.from("members").insert({ telegram_user_id: uid, name, household_id: null }).select("*").single();
   if (err2) throw err2;
   return created as Member;
 }
-
 async function ensureCategories(household_id: string) {
   const { data } = await supabase.from("categories").select("id").eq("household_id", household_id).limit(1);
   if (data && data.length > 0) return;
   await supabase.from("categories").insert(DEFAULT_CATEGORIES.map(c => ({ ...c, household_id })));
 }
-
 async function otherHouseholdMembers(household_id: string, me: number): Promise<Member[]> {
   const { data, error } = await supabase.from("members").select("*").eq("household_id", household_id).neq("telegram_user_id", me);
   if (error) throw error;
   return (data || []) as Member[];
 }
 
-// ====== BOT ======
+// ===== Bot =====
 const bot = new Bot(BOT_TOKEN);
-
-// лог всех ошибок бота в логи Vercel
-bot.catch((err) => {
-  console.error("Bot error:", err.error || err);
-});
-
-// Быстрые проверки
-bot.command("ping", (ctx) => ctx.reply("pong"));
+bot.catch(e => console.error("Bot error:", e.error || e));
+bot.command("ping", ctx => ctx.reply("pong"));
 bot.command("health", async (ctx) => {
-  try {
-    const { error } = await supabase.from("households").select("id", { head: true, count: "exact" }).limit(1);
-    if (error) throw error;
-    await ctx.reply("Supabase: OK");
-  } catch (e: any) {
-    console.error("Supabase health error:", e);
-    await ctx.reply("Supabase error: " + (e?.message || e));
-  }
+  try { const { error } = await supabase.from("households").select("id", { head:true, count:"exact" }).limit(1); if (error) throw error; await ctx.reply("Supabase: OK"); }
+  catch (e:any){ console.error("Supabase health error:", e); await ctx.reply("Supabase error: " + (e?.message || e)); }
 });
 
-// Команды
 bot.command("start", async (ctx) => {
   if (!isPrivate(ctx)) return ctx.reply("Используйте бота в личном чате.");
   const me = await getOrCreateMember(ctx);
@@ -184,9 +146,7 @@ bot.command("add", async (ctx) => {
   const parts = rest.split(/\s+/);
   const catName = parts.shift()!;
   let price: number | null = null;
-  if (parts.length) {
-    const maybe = toPrice(parts[0]); if (maybe !== null) { price = maybe; parts.shift(); }
-  }
+  if (parts.length) { const p = toPrice(parts[0]); if (p !== null) { price = p; parts.shift(); } }
   const title = parts.join(" ").trim();
   if (!title) return ctx.reply("Укажите название хотелки после категории и (опционально) цены.");
 
@@ -210,7 +170,7 @@ bot.command("add", async (ctx) => {
     await bot.api.sendMessage(m.telegram_user_id, `➕ Новая хотелка: <b>${escapeHtml(title)}</b>${price ? " — " + fmtMoney(price) : ""}`, { parse_mode: "HTML" });
   }
 
-  await ctx.reply(`Добавлено: ${buildItemLine(item as Item)}`, { parse_mode: "HTML", reply_markup: keyboardForItem(item as Item) });
+  await ctx.reply(`Добавлено: ${buildItemLine(item as Item)}`, { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("✅ Готово", `toggle:${(item as Item).id}`).text("✏ Цена", `hintprice:${(item as Item).id}`).row().text("🗑 Удалить", `del:${(item as Item).id}`) });
 });
 
 bot.command("list", async (ctx) => {
@@ -257,9 +217,7 @@ bot.on("callback_query:data", async (ctx) => {
     if (!item) return ctx.answerCallbackQuery({ text: "Не найдено" });
     const newStatus = item.status === "done" ? "active" : "done";
     await supabase.from("items").update({ status: newStatus }).eq("id", id);
-    await ctx.editMessageText(`Обновлено: ${buildItemLine({ ...item, status: newStatus } as Item)}`, {
-      parse_mode: "HTML", reply_markup: keyboardForItem({ ...item, status: newStatus } as Item)
-    });
+    await ctx.editMessageText(`Обновлено: ${buildItemLine({ ...item, status: newStatus } as Item)}`, { parse_mode: "HTML", reply_markup: new InlineKeyboard().text(newStatus==="done"?"↩️ Вернуть":"✅ Готово", `toggle:${id}`).text("✏ Цена", `hintprice:${id}`).row().text("🗑 Удалить", `del:${id}`) });
     return ctx.answerCallbackQuery();
   }
   if (d.startsWith("del:")) {
@@ -275,15 +233,12 @@ bot.on("callback_query:data", async (ctx) => {
   }
 });
 
-// ====== Vercel handler (HTTP-адаптер) ======
+// ===== Vercel handler (HTTP adapter) =====
 const handleUpdate = webhookCallback(bot, "http"); // <— ВАЖНО
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    if (req.method !== "POST") {
-      res.status(200).send("OK");
-      return;
-    }
+    if (req.method !== "POST") { res.status(200).send("OK"); return; }
     await handleUpdate(req as any, res as any);
   } catch (err) {
     console.error("Webhook error:", err);
