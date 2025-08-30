@@ -538,16 +538,21 @@ bot.callbackQuery("add_item", async (ctx: Context) => {
   }
 });
 
-/** --- Просмотр списка хотелок --- */
-bot.callbackQuery("list_items", async (ctx: Context) => {
+/** --- /list (показ списка через команду) --- */
+bot.command("list", async (ctx: Context) => {
   try {
+    if (!isPrivate(ctx)) return ctx.reply("Используйте бота в личном чате.");
+
     const me = await getOrCreateMember(ctx);
     if (!me.household_id) {
-      await ctx.answerCallbackQuery({ text: "Сначала создайте или присоединитесь к домохозяйству" });
-      return;
+      return ctx.reply("Сначала создайте или присоединитесь к домохозяйству.", {
+        reply_markup: new InlineKeyboard()
+          .text("🏠 Создать", "create_household")
+          .text("🔗 Присоединиться", "join_household")
+      });
     }
 
-    // Получаем элементы с их изображениями и категориями
+    // Берём элементы (как в list_items / show_all_items)
     const { data: items, error } = await supabase
       .from("items")
       .select(`
@@ -560,33 +565,33 @@ bot.callbackQuery("list_items", async (ctx: Context) => {
       .order("created_at", { ascending: false });
 
     if (error) {
-      logger.error("Error fetching items:", error);
-      await ctx.answerCallbackQuery({ text: "Ошибка при получении данных" });
-      return;
+      logger.error("Error fetching items (/list):", error);
+      return ctx.reply("Ошибка при получении данных.");
     }
 
     const rows = (items || []) as ItemWithRelations[];
+
     if (rows.length === 0) {
-      await ctx.editMessageText("Пусто. Добавьте хотелки через меню.", {
-        reply_markup: new InlineKeyboard().text("➕ Добавить", "add_item").row().text("⬅️ Назад", "refresh_menu")
+      return ctx.reply("Пусто. Добавьте хотелки через меню.", {
+        reply_markup: new InlineKeyboard()
+          .text("➕ Добавить", "add_item").row()
+          .text("⬅️ В меню", "refresh_menu")
       });
-      await ctx.answerCallbackQuery();
-      return;
     }
 
-    await ctx.editMessageText(`Найдено хотелок: ${rows.length}\nВыберите действие:`, {
+    // Показываем такое же меню, как по кнопке "Список хотелок"
+    return ctx.reply(`Найдено хотелок: ${rows.length}\nВыберите действие:`, {
       reply_markup: new InlineKeyboard()
         .text("📋 Показать все", "show_all_items")
-        .text("🏷 По категориям", "categories")
-        .row()
+        .text("🏷 По категориям", "categories").row()
         .text("⬅️ Назад", "refresh_menu")
     });
-    await ctx.answerCallbackQuery();
-  } catch (error) {
-    logger.error("Error in list_items callback", error);
-    await ctx.answerCallbackQuery({ text: "Ошибка" });
+  } catch (e) {
+    logger.error("Error in /list command", e);
+    return ctx.reply("Произошла ошибка. Попробуйте ещё раз.");
   }
 });
+
 
 bot.callbackQuery("show_all_items", async (ctx: Context) => {
   try {
