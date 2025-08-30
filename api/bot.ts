@@ -1,4 +1,4 @@
-import { Bot, Context, InlineKeyboard, webhookCallback } from "grammy";
+import { Bot, Context, InlineKeyboard, webhookCallback, InputMediaPhoto } from "grammy";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
@@ -88,7 +88,7 @@ const DEFAULT_CATEGORIES = [
   { name: "бесплатные места", slug: "free_places" },
   { name: "Ресторан", slug: "restaurant" },
   { name: "Поездка", slug: "trip" },
-  { name: "Вещи", slug: "things" },
+  { name: "Веси", slug: "things" },
   { name: "Косметика", slug: "cosmetics" },
   { name: "Игры", slug: "games" },
   { name: "Страйкбол", slug: "airsoft" },
@@ -125,7 +125,9 @@ const chunk = <T,>(arr: T[], size: number) => {
 
 async function getOrCreateMember(ctx: Context): Promise<Member> {
   try {
-    const uid = ctx.from!.id;
+    if (!ctx.from) throw new Error("User not found in context");
+    
+    const uid = ctx.from.id;
     const name = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ") || ctx.from?.username || null;
     
     const { data, error } = await supabase.from("members").select("*").eq("telegram_user_id", uid).maybeSingle();
@@ -452,7 +454,7 @@ bot.on("message", async (ctx: Context) => {
       return;
     }
 
-    // не перехватываем команды во время визарда
+    // не перехватываем команды во время визард
     if (text && text.startsWith("/")) return;
 
     // STAGE: title  — сохраняем название (+фото), спрашиваем категорию
@@ -648,6 +650,11 @@ bot.callbackQuery("show_all_items", async (ctx: Context) => {
 /** --- Редактирование хотелок --- */
 bot.callbackQuery(/edit:.+/, async (ctx: Context) => {
   try {
+    if (!ctx.callbackQuery?.data) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: данные не получены" });
+      return;
+    }
+    
     const itemId = ctx.callbackQuery.data.split(':')[1];
     const { data: item } = await supabase
       .from('items')
@@ -678,6 +685,15 @@ bot.callbackQuery(/edit:.+/, async (ctx: Context) => {
 
 bot.callbackQuery(/edit_title:.+/, async (ctx: Context) => {
   try {
+    if (!ctx.callbackQuery?.data) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: данные не получены" });
+      return;
+    }
+    if (!ctx.from) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: пользователь не определен" });
+      return;
+    }
+    
     const itemId = ctx.callbackQuery.data.split(':')[1];
     
     // Создаем pending edit запись
@@ -699,6 +715,15 @@ bot.callbackQuery(/edit_title:.+/, async (ctx: Context) => {
 
 bot.callbackQuery(/edit_price:.+/, async (ctx: Context) => {
   try {
+    if (!ctx.callbackQuery?.data) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: данные не получены" });
+      return;
+    }
+    if (!ctx.from) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: пользователь не определен" });
+      return;
+    }
+    
     const itemId = ctx.callbackQuery.data.split(':')[1];
     
     // Создаем pending edit запись
@@ -720,6 +745,11 @@ bot.callbackQuery(/edit_price:.+/, async (ctx: Context) => {
 
 bot.callbackQuery(/edit_photo:.+/, async (ctx: Context) => {
   try {
+    if (!ctx.callbackQuery?.data) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: данные не получены" });
+      return;
+    }
+    
     const itemId = ctx.callbackQuery.data.split(':')[1];
     const { data: photos } = await supabase
       .from('item_images')
@@ -738,6 +768,15 @@ bot.callbackQuery(/edit_photo:.+/, async (ctx: Context) => {
 
 bot.callbackQuery(/add_photo:.+/, async (ctx: Context) => {
   try {
+    if (!ctx.callbackQuery?.data) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: данные не получены" });
+      return;
+    }
+    if (!ctx.from) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: пользователь не определен" });
+      return;
+    }
+    
     const itemId = ctx.callbackQuery.data.split(':')[1];
     
     // Создаем pending edit запись
@@ -759,6 +798,11 @@ bot.callbackQuery(/add_photo:.+/, async (ctx: Context) => {
 
 bot.callbackQuery(/view_photos:.+/, async (ctx: Context) => {
   try {
+    if (!ctx.callbackQuery?.data) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: данные не получены" });
+      return;
+    }
+    
     const itemId = ctx.callbackQuery.data.split(':')[1];
     const { data: photos } = await supabase
       .from('item_images')
@@ -766,11 +810,11 @@ bot.callbackQuery(/view_photos:.+/, async (ctx: Context) => {
       .eq('item_id', itemId);
 
     if (photos && photos.length > 0) {
-      // Отправляем все фото альбомом
-      const media = photos.map(photo => ({
+      // Правильно типизируем медиа объекты
+      const media: InputMediaPhoto[] = photos.map(photo => ({
         type: 'photo',
         media: photo.file_id
-      }));
+      } as InputMediaPhoto));
       
       await ctx.replyWithMediaGroup(media);
       
@@ -789,6 +833,11 @@ bot.callbackQuery(/view_photos:.+/, async (ctx: Context) => {
 
 bot.callbackQuery(/delete_photos:.+/, async (ctx: Context) => {
   try {
+    if (!ctx.callbackQuery?.data) {
+      await ctx.answerCallbackQuery({ text: "Ошибка: данные не получены" });
+      return;
+    }
+    
     const itemId = ctx.callbackQuery.data.split(':')[1];
     
     // Удаляем все фото элемента
@@ -878,8 +927,6 @@ bot.callbackQuery("budget", async (ctx: Context) => {
     await ctx.answerCallbackQuery({ text: "Ошибка" });
   }
 });
-
-// ... (остальные обработчики callback_query из оригинального кода)
 
 /** ===== Vercel handler (HTTP adapter) ===== */
 const handleUpdate = webhookCallback(bot, "http");
